@@ -1,0 +1,860 @@
+---
+title: "Exploring Peaceful Cooperation: Quantifying the Impact of Economic Interdependence on Armed Conflict Probability"
+subtitle: "A Comparative Study of Regional Trade Agreements and the Theory of Democratic Peace"
+abstract: "Economic interdependence is a critical factor in shaping the probability of armed conflict. This study aims to provide empirical evidence on the relationship between depth of econimic interdependence in form of regional trade agreements (RTAs) and peace. For this purpose the research adopts a quantitative research design, specifically logistic regression analysis on a dyadic data structure. It finds that the existence of RTAs has a negative impact on the probability of armed conflicts, although these findings can not be viewed as statistical significant."
+author:
+  - "Lasse Rodeck, Matrikel Nr.: 6906226"
+date: "`r format(Sys.time(), '%A %d %B, %Y')`"
+output: 
+  pdf_document: 
+    latex_engine: xelatex
+    keep_tex: yes
+    toc: yes
+    number_sections: yes
+    fig_width: 8
+    fig_height: 4
+    extra_dependencies: ["float"]
+bibliography: references.bib
+lof: true
+lot: true
+lang: en-EN
+fontsize: 11pt
+linestretch: 1.5
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, fig.pos = "H", out.extra = "")
+
+```
+
+```{r data, message=FALSE, warning=FALSE, include=FALSE}
+# library ---------
+library(peacesciencer)
+library(wbstats)
+library(tidyverse)
+library(ggpubr)
+library(countrycode)
+library(states)
+library(lubridate)
+library(messydates)
+library(democracyData)
+library(scales)
+library(zoo)
+library(owidR)
+library(readxl)
+# Create Base Tables -----
+
+## state-year data frame for all years since 1945 -------
+
+state_years <- create_stateyears(system = "cow", subset_years = 1945:2023)
+
+
+## Polity IV democracy scores --------
+polity
+
+## Matchtable major power -----
+cow_majors$gwcode <- countrycode(cow_majors$ccode, origin = 'cown', destination = 'gwn', custom_match = c('300' = '300'))
+cow_majors$countryname <- countrycode(as.numeric(cow_majors$gwcode), origin = 'gwn', destination = 'country.name', custom_match = c('300' = 'Austria-Hungary'))
+
+## Match table alliances -----
+alliance_by_member_yearly <- read.csv("Data/alliance_v4.1_by_member_yearly.csv")
+
+
+
+## Match Table War Names ----
+cow_wars_match_tables <- read_csv("Data/Inter-StateWarData_v4.0.csv")%>%
+  select(WarNum, WarName, WarType)%>%
+  mutate(WarName = as.factor(WarName))%>%
+  unique()
+## colonial History match table ----
+
+library(readr)
+Colonial_Origin_RAW <- read_delim("Data/Colonial Origin.csv", 
+                              delim = ";", escape_double = FALSE, col_types = cols(ht_colonial = col_number()), 
+                              trim_ws = TRUE)
+
+
+
+# 00: Never colonized by a Western overseas colonial power
+# 01: Dutch
+# 02: Spanish
+# 03: Italian
+# 04: US
+# 05: British
+# 06: French
+# 07: Portuguese
+# 08: Belgian
+# 09: British-French
+# 10: Australian
+
+Colonial_Origin <- Colonial_Origin_RAW%>%
+  mutate(dutch_colony =            as.factor(ifelse(ht_colonial == 100,1,0) )
+         , spanish_colony =        as.factor(ifelse(ht_colonial == 200,1,0))
+         , italian_colony =        as.factor(ifelse(ht_colonial == 300,1,0))
+         , US_colony =             as.factor(ifelse(ht_colonial == 400,1,0))
+         , british_colony =        as.factor(ifelse(ht_colonial == 500,1,0))
+         , french_colony =         as.factor(ifelse(ht_colonial == 600,1,0))
+         , portuguese_colony =     as.factor(ifelse(ht_colonial == 700,1,0))
+         , belgian_colony =        as.factor(ifelse(ht_colonial == 800,1,0))
+         , british_french_colony = as.factor(ifelse(ht_colonial == 900,1,0))
+         , australian_colony =     as.factor(ifelse(ht_colonial == 1000,1,0))
+         , former_colony =         as.factor(ifelse(ht_colonial > 0, 1,0)))%>%
+  select(-ccode_qog, -ccodealp, -ccodealp_year, -version, -cname_qog, -cname_year, -ccodecow)%>%
+  select(ccode, cname, year, former_colony)
+
+## War informations -----
+
+war_stats<- cow_war_inter%>%
+  select(warnum, ccode1, ccode2, year, initiator1, initiator2, outcome1, outcome2, batdeath1, batdeath2)%>%
+  mutate(aggressor = case_when(initiator1 == 1 ~ ccode1
+                               , initiator2 == 1 ~ ccode2)
+         , looser = case_when(outcome1 == 2 ~ ccode1
+                              , outcome2 == 2 ~ ccode2)
+         , winner = case_when(outcome1 == 1 ~ ccode1
+                              , outcome2 == 1 ~ ccode2)
+         , is_tied = case_when(outcome1 == 3 ~ 1
+                               , outcome1 != 3 ~ 0)
+         , ongoing_2007 = case_when(outcome1 == 5 ~ 1
+                                    , outcome1 != 5 ~ 0)
+         , stalemate = case_when(outcome1 == 6 ~ 1
+                                 , outcome1 != 6 ~ 0)
+         , conflict_minor = case_when(outcome1 == 7 ~ 1
+                                      , outcome1 != 7 ~ 0)
+         , aggressor_won = case_when(aggressor == winner ~ 1
+                                     , aggressor != winner ~ 0)
+         , gwcode1 = countrycode(ccode1, origin = 'cown', destination = 'gwn', custom_match = c('300' = '300'))
+         , gwcode2 = countrycode(ccode2, origin = 'cown', destination = 'gwn', custom_match = c('300' = '300'))
+  )
+
+## Amount of previous wars ---- 
+
+
+wars_before <- war_stats%>%
+  select(ccode1, year, warnum)%>%
+  group_by(ccode1, year) %>%
+  dplyr::summarize(count = n_distinct(warnum)) %>% 
+  ungroup() %>%
+  right_join(war_stats%>%
+               select(ccode1, year)%>%
+               unique(), by = join_by(ccode1 == ccode1
+                                      , year > year))%>%
+  group_by(ccode1, year.x)%>%
+  dplyr::summarize(previous_wars = sum(count, na.rm = T ))%>%
+  ungroup()
+
+## GDP per capita & Income inequality ------
+
+gini_coef <- read_csv("Data/economic-inequality-gini-index.csv")
+## Recoding gini_coef$Entity
+gini_coef$Entity <- gini_coef$Entity %>%
+  fct_recode(
+    "Argentina" = "Argentina - urban"
+  )
+gini_coef <- gini_coef%>%
+  mutate(Entity = as.character(Entity)
+         , Code = as.character(Code))%>%
+  mutate(Code = as.character(case_when(Entity == "Argentina" ~ "ARG"
+                          , .default = as.character(Code)))
+         )%>%
+  rename(year = Year
+         , code = Code
+         , entity = Entity)
+
+
+
+gdp_per_cap <- read_csv("Data/gdp-per-capita-maddison.csv")%>%
+  rename(year = Year
+         , code = Code
+         , entity = Entity)
+
+wb_economics <-  gdp_per_cap%>%
+  left_join(gini_coef, join_by(code, closest(year >= year)))%>%
+  select(-entity.y, -year.y)%>%
+  mutate(entity = entity.x
+         , year = year.x
+         , code = countrycode(code,'iso3c','cown')
+         , gdp_per_capita = `GDP per capita`
+         , gini = na.locf0(`Gini coefficient`, fromLast = T))%>%
+  select(entity, code, year, gdp_per_capita, gini)
+
+## geographic Data ----
+geographic_data <- create_stateyears(system = "cow", subset_years = 1945:2023) %>%
+  add_rugged_terrain() # terrain ruggedness index + logarithmic transformation of how mountainous the state
+
+natural_ressource_rents <- wb_data("NY.GDP.TOTL.RT.ZS")%>%
+  rename(natural_ressource_rents = NY.GDP.TOTL.RT.ZS
+         , year = date)%>%
+  mutate(ccode = countrycode(iso3c, "iso3c","cown"))%>%
+  select(-iso2c, -iso3c, -unit, -obs_status, -footnote,-last_updated)%>%
+  drop_na()%>%
+  select(ccode, country, year, natural_ressource_rents)
+
+##  Human development index ------
+hdi <- read_csv("Data/human-development-index-escosura.csv")%>%
+  rename(year = Year
+         , code = Code
+         , entity = Entity)
+hdi <- hdi%>%
+  mutate(ccode = countrycode(code, origin = "iso3c", destination = "cown")
+         , hdi = `Historical Index of Human Development (Prados de la Escosura)`)%>%
+  select(-`Historical Index of Human Development (Prados de la Escosura)`)
+
+## Goldstein Score ----
+
+Goldenstein_Score_raw <- read_csv("Data/Goldstein Score.csv")
+
+Goldenstein_Score <- Goldenstein_Score_raw%>%
+  mutate(ccode = countrycode(ActionGeo_CountryCode,"fips","cown")
+         , entity = countrycode(ActionGeo_CountryCode,"fips","country.name")
+         , region = countrycode(ActionGeo_CountryCode,"fips","region"))%>%
+  rename(year = Year)%>%
+  select(ccode, entity, year, region, goldstein_score, tone)%>%
+  drop_na()
+
+WEIS_DATA_RAW <- read_csv("Data/05211-0002-Data.txt", 
+                          col_names = FALSE, col_types = cols(X1 = col_character()))
+
+WEIS_DATA_BRONCE <- tibble(
+  year = as.integer(paste0("19",str_sub(WEIS_DATA_RAW$X1,12,13)))
+  , month = as.integer(str_sub(WEIS_DATA_RAW$X1,14,15))
+  , day = as.integer(str_sub(WEIS_DATA_RAW$X1,16,17))
+  , actor_code = as.integer(str_sub(WEIS_DATA_RAW$X1,18,20))
+  , event_code = as.character(str_sub(WEIS_DATA_RAW$X1,23,25))
+  , target_code = as.integer(str_sub(WEIS_DATA_RAW$X1,26,28))
+  , arena_code = as.integer(str_sub(WEIS_DATA_RAW$X1,29,31))
+)
+
+
+
+actor_match <- read_excel("Data/WEIS Matching.xlsx")
+events_match <- read_excel("Data/WEIS Matching.xlsx", 
+                           sheet = "Events")%>%
+  rename(base_code = `Base Code`
+         , event_code = `Event Code`
+         , description = Description)%>%
+  group_by(base_code,  event_code) %>%
+  summarise(description = paste(description, collapse = ","))%>%
+  ungroup()%>%
+  drop_na()
+  
+arena_match <- read_excel("Data/WEIS Matching.xlsx", 
+                            sheet = "Arenas")
+
+goldstein_points <- read_excel("Data/WEIS Matching.xlsx", 
+                               sheet = "Goldstein Scale")
+
+WEIS_DATA_SILVER <- WEIS_DATA_BRONCE%>%
+  left_join(actor_match, join_by(actor_code == Code_N))%>%
+  select(-actor_code, -ISO3C)%>%
+  rename(actor = Entity)%>%
+  left_join(events_match, join_by(event_code == event_code), relationship = "many-to-many")%>%
+  rename(base_action = base_code
+         , action_description = description)%>%
+  left_join(actor_match, join_by(target_code == Code_N), relationship = "many-to-many")%>%
+  rename(target = Entity)%>%
+  left_join(arena_match, join_by(arena_code == Code))%>%
+  mutate(Definition = replace_na(Definition, "")
+         , event_code = as.integer(event_code))%>%
+  left_join(goldstein_points, join_by(event_code))%>%
+  select(-target_code, -arena_code, -description)
+
+
+goldstein_score_full <- rbind( 
+  WEIS_DATA_SILVER%>%
+    select(year, target, points)%>%
+    group_by(year, target)%>%
+    summarise(goldstein_score = mean(points))%>%
+    ungroup()%>%
+    mutate(country = target
+           , ccode = countrycode(country,"country.name","cown")
+           , region = countrycode(country,"country.name", "region"))%>%
+    rename(entity = country)%>%
+    drop_na()%>%
+    select(ccode, entity, year, region, goldstein_score)
+  ,
+  Goldenstein_Score%>%
+    select(ccode, entity, year, region, goldstein_score)
+)%>%
+  mutate(year = year+1)
+
+
+# Create Factor Tables ------
+## Political Factors ------
+politcal_factors <- state_years%>%
+  left_join(polity, by = join_by(ccode  == ccode , year == year))%>%
+  left_join(alliance_by_member_yearly, by = join_by(ccode  == ccode , year == year), multiple = "all")%>%
+  mutate(polityIV = polity
+         , is_democracy = as.factor(ifelse(polity >=6,1,0))
+  )%>%
+  group_by(ccode, statenme, year, polity, is_democracy)%>%
+  summarise(defense_pact = as.factor(max(defense))
+            , neutrality_pact = as.factor(max(neutrality))
+            , nonaggression_pact = as.factor(max(nonaggression))
+            , entente_pact = as.factor(max(entente))
+            )%>%
+  select(ccode, statenme, year, polity, is_democracy, defense_pact, neutrality_pact, nonaggression_pact, entente_pact)%>%
+  unique()%>%
+  ungroup()
+
+## Historical Factors ----
+historical_factors <- Colonial_Origin%>%
+  mutate(ccode = countrycode(cname, "country.name", "cown"
+         , custom_match = c('Serbia' = '345'))
+         , ccode = as.double(ccode))%>%
+  left_join(wars_before, by = join_by(ccode == ccode1 
+                                      , year == year.x))
+
+## Socioeconomic Factors ----
+
+socioeconomic_factors <- wb_economics%>%
+  left_join(hdi%>%select(-code), by = join_by(code == ccode
+                                              , closest(year >= year)
+                                              , entity == entity))%>%
+  select(code, entity, year.x, gdp_per_capita, gini, hdi)%>%
+  mutate(year = year.x+1)%>%
+  select(code, entity, year, gdp_per_capita, gini, hdi)
+
+## Geographic Factors ----
+geographic_factors <- geographic_data%>%
+  left_join(natural_ressource_rents, by = join_by(ccode, year))%>%
+  select(-country, -statenme)%>%
+  group_by(ccode)%>%
+  mutate(natural_ressource_rents = na.locf0(natural_ressource_rents, fromLast = TRUE))
+
+## RTA Data ----
+rtas <- read_csv("Data/rta_20221214.csv")
+
+net_rta <- rtas%>%
+  mutate(region_reporter = countrycode(exporter, "iso3c","region")
+         , region_partner = countrycode(importer, "iso3c","region"))
+
+country_distance <- create_dyadyears(system = "cow")%>%
+  filter(year > 1945)%>%
+  add_minimum_distance()%>%
+  mutate(ccode1 = countrycode(ccode1, "cown","iso3c")
+         , ccode2 = countrycode(ccode2, "cown","iso3c"))
+
+rta_ref <- net_rta%>%
+  mutate(ccode1 = exporter
+         , ccode2 = importer)%>%
+  select(-exporter, -importer)%>%
+  left_join(country_distance, by = join_by(ccode1, ccode2, year))%>%
+  mutate(regional = case_when(mindist == 0 ~ 1
+                              , region_reporter == region_partner ~ 1
+                              , .default = 0))%>%
+  filter(regional == 1)%>%
+  rename(ccode = ccode1)%>%
+  group_by(ccode, year)%>%
+  summarise(rta_deep = sum(ifelse(cu + eia + cueia + ftaeia + psaeia >= 1,1,0))
+            , rta_shallow = sum(ifelse(fta + psa >= 1 & cu + eia + cueia + ftaeia + psaeia == 0,1,0)))%>%
+  mutate(ccode = countrycode(ccode, "iso3c","cown"))
+
+
+  
+
+
+
+# Full Data ----
+
+attacks_against <- war_stats%>%
+  filter(initiator2 == 1 & year >= 1946)%>%
+  mutate(attacked = 1)%>%
+  select(ccode1, ccode2, year, attacked)
+
+
+rta_dyd <- net_rta%>%
+  mutate(ccode1 = countrycode(exporter,"iso3c","cown")
+         , ccode2 = countrycode(importer,"iso3c","cown")
+         , rta_deep = (cu + eia + cueia + ftaeia + psaeia)
+         , rta_shalloe = (fta + psa))%>%
+  select(-exporter, -importer, -rta, -cu, -fta, -psa, -eia, -cueia
+         , -psaeia, -ftaeia, -region_reporter, -region_partner)
+
+
+full_data_1 <- create_dyadyears(system = "cow")%>%
+  mutate(region1 = countrycode(ccode1, "cown", "region")
+         , region2 = countrycode(ccode2, "cown", "region"))%>%
+  filter(year > 1945)%>%
+  add_minimum_distance()%>%
+  filter(region1 == region2 | mindist == 0)%>%
+  add_cow_wars(type = "inter")%>%
+  rename(attacked = cowinteronset)%>%
+  select(-cowinterongoing, -sidea1, -sidea2, -initiator1
+         , -initiator2, -outcome1, -outcome2, -batdeath1, -batdeath2, -resume)%>%
+  add_cow_majors()%>%
+  rename(is_major_power = cowmaj1
+         , partner_is_major_power = cowmaj2)%>%
+  left_join(rta_dyd, join_by(ccode1,ccode2,year))%>%
+  inner_join(socioeconomic_factors, join_by(ccode1 == code
+                                            , year == year))%>%
+  rename(gdp_per_capita_attacked = gdp_per_capita
+         , gini_attacked = gini
+         , hdi_attacked = hdi)%>%
+  inner_join(socioeconomic_factors, join_by(ccode2 == code
+                                            , year == year))%>%
+  rename(gdp_per_capita_attacker = gdp_per_capita
+         , gini_attacker = gini
+         , hdi_attacker = hdi)%>%
+  left_join(historical_factors, join_by(ccode1 == ccode
+                                        , year == year))%>%
+  rename(former_colony_attacked = former_colony 
+         , previous_wars_attacked = previous_wars
+         )%>%
+  left_join(historical_factors, join_by(ccode2 == ccode
+                                        , year == year))%>%
+  rename(former_colony_attacker = former_colony 
+         , previous_wars_attacker = previous_wars
+         )%>%
+  left_join(politcal_factors, join_by(ccode1 == ccode
+                                      , year == year))%>%
+  rename(is_democracy_attacked = is_democracy 
+         , defense_pact_attacked = defense_pact
+         , neutrality_pact_attacked = neutrality_pact
+         , nonaggression_attacked = nonaggression_pact
+         , entente_pact_attacked = entente_pact
+         , polity_attacked = polity)%>%
+  left_join(politcal_factors, join_by(ccode2 == ccode
+                                      , year == year))%>%
+  rename(is_democracy_attacker = is_democracy 
+         , defense_pact_attacker = defense_pact
+         , neutrality_pact_attacker = neutrality_pact
+         , nonaggression_attacker = nonaggression_pact
+         , entente_pact_attacker = entente_pact
+         , polity_attakcer = polity)%>%
+  left_join(geographic_factors, join_by(ccode1 == ccode
+                                        , year == year))%>%
+  rename(rugged_attacked = rugged 
+         , dnewlmtnest_attacked = newlmtnest
+         , natural_ressource_rents_attacked = natural_ressource_rents)%>%
+  left_join(geographic_factors, join_by(ccode2 == ccode
+                                        , year == year))%>%
+  rename(rugged_attacker = rugged 
+         , dnewlmtnest_attacker = newlmtnest
+         , natural_ressource_rents_attacker = natural_ressource_rents)%>%
+  group_by(ccode1, ccode2, year)%>%
+  na.locf()%>%
+  ungroup()%>%
+  # left_join(attacks_against, join_by(ccode1 == ccode1
+  #                                    , ccode2 == ccode2
+  #                                    , year == year))%>%
+  mutate(former_colony_attacked = as.factor(replace_na(as.integer(former_colony_attacked), 0))
+         , former_colony_attacker = as.factor(replace_na(as.integer(former_colony_attacker), 0))
+         , previous_wars_attacker = replace_na(previous_wars_attacker, 0)
+         , previous_wars_attacked = replace_na(previous_wars_attacked, 0)
+         , era = as.factor(case_when(year >= 1945 & year < 1960 ~ 'Early Cold War Era'
+                                     , year >= 1960 & year < 1980 ~ 'Vietnam Era'
+                                     , year >= 1980 & year < 1992 ~ 'Late Cold War Era'
+                                     , year >= 1992 & year < 2001 ~ 'Post Cold War Era'
+                                     , year >= 2001 ~ 'Post 9/11 War Era'))
+         , region = as.factor(region1)
+         , attacked = replace_na(attacked, 0)
+         , attacked = as.factor(if_else(attacked >= 1, 1,0))
+         , gdp_per_capita_attacked = log(gdp_per_capita_attacked)
+         , gdp_per_capita_attacker = log(gdp_per_capita_attacker)
+         , rta_deep = as.integer(replace_na(rta_deep, 0))
+         , rta_shalloe = as.integer(replace_na(rta_shalloe, 0))
+  )%>%
+  left_join(goldstein_score_full, join_by(ccode1 == ccode
+                                          , year == year))%>%
+  mutate(goldstein_score = replace_na(goldstein_score,0))%>%
+  rename(region = region.x)%>%
+  select(-contains(".x"), -contains(".y")
+         , -region2, -region1, -polity_attakcer
+         , -polity_attacked)%>%
+  unique()
+
+
+```
+
+# Introduction
+
+Armed conflict continues to pose significant challenges to regional and global stability. Exploring the role of economic interdependence in mitigating or exacerbating armed conflict is essential for policymakers, international organizations, and scholars in their efforts to promote peace. This research aims to provide empirical evidence on the relationship between economic interdependence, as indicated by regional trade agreements (RTAs), and the probability of armed conflict across different regions. By doing so, we can better understand the mechanisms through which economic factors influence peace and conflict dynamics.
+
+In today's complex global landscape, understanding the factors that contribute to peace and conflict dynamics is of utmost importance. This expository document aims to explore the relationship between economic interdependence and the probability of armed conflict, focusing on RTAs as a measure of economic integration. By quantitatively analyzing this relationship, we can gain valuable insights into the potential pacifying effects of economic cooperation and contribute to the field of peace science.
+
+```{r Democracies_in_the_world, echo=FALSE, message=FALSE, warning=FALSE, fig.cap= "Number of Democracies in the World by region"}
+
+## Democracies in the world ----
+democracies <- politcal_factors%>%
+  mutate(region = countrycode(ccode, origin = "cown", destination = "continent"))%>%
+  group_by(year, region)%>%
+  summarise(democracies = sum(as.integer(is_democracy), na.rm = T ))%>%
+  ungroup()%>%
+  select(year, region, democracies)%>%
+  drop_na()
+
+
+democracies %>%
+ filter(!is.na(region) & year <= 2015) %>%
+ ggplot() +
+ aes(x = year, y = democracies, color = region) +
+ geom_line() +
+ scale_color_ordinal(direction = 1) +
+ ggsci::scale_color_npg() +
+ labs(x = " ", y = " ", title = "Democracies by World Region", 
+ subtitle = "Democracies by continents measured through the polityIV score. 
+Country is measured as democracy with a score >= 6", 
+ caption = "Source: Marshall et al. (2019), Graphic: own visualisation", color = "Region") +
+ owidR::theme_owid()
+
+
+```
+
+Theoretically, this paper will rely on an extension of the democratic peace theory, which states that democracies are less likely to go to war with each other. The extension will be that this tendency towards peaceful coexistence stems from the fact that democracies are also market economies that need to trade with other states, which greatly reduces the utility of war and its consequences. The amount of democratic States has increased greatly since the end of world war 2 (see Graph 1 [@marshall2002]). At the same time the amount of deaths from conflicts declined (see Graph 2 [@owidwarandpeace]). In some way these two factors seem to be linked.
+
+The number of annual deaths resulting from conflicts has been decreasing over time. Moreover, this decline has coincided with an increased number of countries governed by democratic systems (as shown in Graphs 1 & 2 from @marshall2002 and @owidwarandpeace ). Although it may seem alluring to attribute the decline in interstate conflicts to the ideological similarities among democratically ruled countries, it is crucial to acknowledge that conflicts do not only arise from ideological differences. Another way to examine peaceful coexistence is to consider that economic interdependence provides an incentive for maintaining peace. States may have significant economic interests that prevent them from engaging in war against each other. Therefore, it becomes a game of maximizing utility for them. International trade allows states to benefit from each other's specialized economies, whereas war typically incurs significant expenses. The mere possibility of war can already be costly for a state's budgets, thereby making alternatives such as trade agreements increasingly appealing to promote the shared interest in peace within the region.
+
+```{r Deaths_in_conflicts_table, echo=FALSE, message=FALSE, warning=FALSE, fig.cap= "Deaths in State Based Conflicts"}
+
+library(owidR)
+library(tidyverse)
+library(ggplot2)
+library(scales)
+library(readr)
+deaths_in_conflicts <- read_csv("Data/deaths-in-state-based-conflicts-by-world-region.csv")%>%
+  rename(entity = Entity
+         , code = Code
+         , year = Year
+         )
+
+
+
+
+deaths_in_conflicts %>%
+  filter(!(entity %in% "World")) %>%
+  ggplot() +
+  aes(x = year, y = `Deaths in all state-based conflict types`, color = entity) +
+  geom_line() +
+  scale_y_continuous(labels = comma) +
+  scale_color_ordinal(direction = 1) +
+  ggsci::scale_color_npg() +
+  labs(x = " ", y = " ", title = "Deaths in State-Based Conflicts & 
+Number of Democracies in the World", 
+       subtitle = "
+Direct deaths of both military personnel and civilians. Deaths from disease or famine are not included.
+The region does not always relate to where the fighting occurred – it sometimes refers to the region of the participants in the conflict.", 
+       caption = "Source: OWID (Roser et al.(2016)) based on PRIO and UCDP", 
+       color = "Region") +
+  owidR::theme_owid()
+
+
+```
+
+Exploring the relationship between the decline in armed conflicts and the rise of trade between nations becomes a compelling avenue of research. It is important to recognize that conflicts can stem from various sources, including territorial disputes, resource competition, or long term geopolitical interests, ideological divergences rather than economic incentives. By delving deeper into this relationship, the study hopes to contribute to the understanding of the multidimensional dynamics shaping peace and security in the international system.
+
+This research aims to investigate the potential impact of increasing global trade on the likelihood of states engaging in war. With the expansion of world trade (see Graph 3 [@2023World]), it becomes crucial to investigate whether this heightened economic interdependence contributes to reducing the likelihood of armed conflict. This study aims to contribute to our understanding of how economic factors shape international relations and influence peace and security dynamics by analyzing the relationship between the probability of armed conflict and economic interdependence, which is measured through regional trade agreements.
+
+```{r trade, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Trade Volume by Region"}
+
+library(ggpubr)
+trade_of_gdp_by_region <- wb_data(indicator = "NE.TRD.GNFS.ZS", country = "regions_only")
+trade_of_gdp_by_world <- wb_data(indicator = "NE.TRD.GNFS.ZS", country = "world")
+ggplot(rbind(trade_of_gdp_by_region))+
+  aes(x = date , y = NE.TRD.GNFS.ZS/100, color = country)+
+  geom_line()+
+  scale_y_continuous(labels = scales::percent, breaks = scales::pretty_breaks(n = 4))+
+  scale_colour_owid()+
+  expand_limits(y=c(0, 1)) +
+  ggsci::scale_color_npg() +
+  labs(x = "Year", y = "Trade (% of GDP)", title = "Trade Development by Region", 
+       subtitle = "Trade is the sum of exports and imports of goods and
+services measured as a share of gross domestic product.", 
+       caption = "Source: World Bank Open Data 'Trade (% of GDP),' 2021. Own visualistaion",
+       color = "Region") +
+  owidR::theme_owid()
+
+```
+
+Expanding our knowledge in this area is vital for policymakers, as it can provide insights in how to reduce the risk of armed conflict by promoting economic cooperation and trade. By examining the interplay between economic interdependence and the probability of armed conflict, this research seeks to shed light on the complex relationship between economic factors and peace, ultimately contributing to peace science and offering valuable guidance for policymakers and international organizations engaged in conflict prevention and resolution efforts.
+
+The research question guiding this study is: ***To what extent does economic interdependence, as indicated by regional trade agreements, influence the probability of armed conflict across different regions?***
+
+## Hypothesis
+
+Based on existing literature and theoretical arguments, *I argue that higher levels of economic interdependence, as captured by regional trade agreements, results in a reduced probability of armed conflict. Economic interdependence can create incentives for peaceful resolution of disputes, foster mutual gains, and promote cooperation among nations. Therefore, regions with stronger economic integration through RTAs are expected to exhibit lower levels of armed conflict, controlling for relevant political, historical, geographic, and socioeconomic factors.*
+
+As previously mentioned, several other factors influence a country's decision to declare war, which I will account for by controlling them (refer to Table 2 for a list of control variables). Strategic calculations that determine the probability of a successful invasion are highly dependent on the roughness of the terrain, leading to a greater difficulty in accomplishing invasions. Non-democratic countries are likely to have a higher inclination towards declaring wars, as explained later. Thus, I will also take this into account by controlling for it.
+
+In order to study war from an economic standpoint, we must acknowledge that economic decision-making resembles a game, where the best outcome depends on the existing economic conditions of the involved countries. A national leader may opt for warfare if the anticipated benefits of such an action exceed the expected benefits of peaceful coexistence. It is quite difficult to model this game adequately within the scope of this paper. Several factors will be controlled for. The study will consider natural resource rents, which are the most immediate economic benefit that a war can provide to the attacking side. Other economic facilities are susceptible to damage during attacks, and it would require time and investment to improve the economy of the attacker. Other measures consider multiple factors, for example, a country's history of colonization, economic growth indicators like HDI and Gini Coefficient.
+
+# Theory
+
+## Theory of Democratic (Economic) Peace {#theoretical-framework}
+
+The theoretical framework guiding this study is based on the theory of democratic peace [@gibler2014], which posits that democracies are less likely to engage in armed conflict with each other [@geis2010].
+
+> *"Konsolidierte Demokratien führen keine Kriege gegeneinander, sind aber bereit, gegenüber Nichtdemokratien zu den Waffen zu greifen -- das ist der »Doppelbefund« der Theorien vom Demokratischen Frieden (DF)."*
+
+> ------------------------------------------------------------------------
+
+> *"Consolidated democracies do not wage wars against each other but are willing to resort to arms when it comes to non-democracies -- this is the"double finding" of the theories of Democratic Peace (DP)."*
+>
+> @geis2010
+
+This theory suggests that political systems characterized by democratic norms, institutions, and practices tend to foster peaceful relations and resolve disputes through peaceful means rather than resorting to armed aggression. Building upon this theory, I extend the analysis to examine the role of economic interdependence in shaping the probability of armed conflict. This builds upon research by @doyle1986 for example. They them self build upon theoretical arguments by Kant.
+
+> *"Lastly, cosmopolitan law adds material incentives to moral commitments. The cosmopolitan right to hospitality permits the"spirit of commerce" sooner or later to take hold of every nation, thus impelling states to promote peace and to try to avert war. Liberal economic theory holds that these cosmopolitan ties derive from a cooperative international division of labor and free trade according to comparative advantage. Each economy is said to be better off than it would have been under autarky; each thus acquires an incentive to avoid policies that would lead the other to break these economic ties. Because keeping open markets rests upon the assumption that the next set of transactions will also be determined by prices rather than coercion, a sense of mutual security is vital to avoid security-motivated searches for economic autarky. Thus, avoiding a challenge to another liberal state's security or even enhancing each other's security by means of alliance naturally follows economic interdependence"*
+>
+> @doyle1986
+
+According to @doyle1986, economic interdependence plays a vital role in promoting peace among democracies. Economic ties and cooperation, especially through regional trade agreements (RTAs), generate mutual benefits, interdependent interests, and opportunities for diplomatic negotiations. It is expected that countries with greater economic interdependence are more prone to peaceful dispute resolution, as the costs of armed conflict would outweigh the potential gains from cooperation and economic exchange.
+
+Since my analysis aims to test the hypothesis that higher levels of economic interdependence, as indicated by regional trade agreements, correlate with a reduced probability of armed conflict. To achieve this goal, I incorporate the theory of democratic (and by extension economic) peace into my analysis. This theoretical framework offers an analytical perspective, which enables me to comprehend the underlying mechanisms and dynamics that link economic cooperation and peace, and it informs my interpretation of the empirical findings.
+
+## Regional Trade Agreements
+
+As per World Bank defined "A regional trade agreement (RTA) is a treaty between two or more governments that define the rules of trade for all signatories. Examples of regional trade agreements include the North American Free Trade Agreement (NAFTA), Central American-Dominican Republic Free Trade Agreement (CAFTA-DR), the European Union (EU) and Asia-Pacific Economic Cooperation (APEC)" [@2023World].
+
+Regional Trade Agreements (RTAs) can be part of different country and regions specific policy strategies. "Among those identified are the use of regional trade agreements to underpin domestic policy reforms (Mexico in NAFTA); the desire to achieve firmer market access with large trading partners (Canada in CUSTA); the link between trade agreements and strengthened security arrangements (EU); the use of agreements to strengthen collective bargaining power in multilateral trade negotiations (EU); the use of regional negotiations as a threat to driving multilateral negotiations forward (the United States in CUSTA, NAFTA)" [@frankel1997]. This paper aims to focus on the security aspects of RTAs, building upon @powers2004 who points out that RTAs have been used to settle regional conflicts or its potential for said conflicts.
+
+> *France and Germany were historical rivals at the inception of the European Coal and Steel Community (ECSC). Border disputes arose among member states of the Economic Community of West African States (ECOWAS). In Asia, the Association of Southeast Asian Nations (ASEAN) members are presently involved in the ongoing Spratly Islands' dispute and North Korean nuclear weapons issue. The South Asian Association for Regional Cooperation (SAARC) contends with the India--Pakistan nuclear rivalry. Multiple political disputes led to the demise and recent resurgence of the East African Community (EAC). Trade activities were interrupted among Gulf Cooperation Council (GCC) members during the Persian Gulf War in 1992. Recently, the Caribbean Community (CARICOM) denounced the Haitian coup in which President Aristide was removed from power. CARICOM pressed for a UN investigation into the role of the U.S. in the coup. Libya recently called for enhanced military capabilities for the Community of Sahel and Saharan States (CENSAD) in order to provide "African solutions to African problems." Finally, the European Union's rapid reaction force intervened in the Macedonian conflict in 2003.*
+>
+> @powers2004
+
+@vicard2012 explores RTAs in relation to securitisation policy and distinguishes between "deep" and "shallow" RTAs. Deep RTAs are characterised by the creation of closer ties, such as customs unions or common markets, between countries. According to the study, Deep RTAs have a lower likelihood of causing armed conflict compared to shallow RTAs, which have been shown to have a weaker impact, if any, on a state's inclination to engage in warfare with another.
+
+The before-stated hypothesis will be tested based on the theoretical understanding of RTAs elaborated above. According to @vicard2012, it is recommended to distinguish between various forms of RTAs such as "deep" and "shallow" to differentiate between different types and strengths of economic dependence.
+
+# Literature Review
+
+In the following paragraphs I would like to outline a selection of the current state of discourse in the field of probability based thread assesment of interstate conflict. The inspiration for this method and topic is @collier2004. Collier & Hoeffler tried to investigate civil, so intrastate conflicts with a new framework based on greed and opportunity.
+
+> *"Rebellion may be explained by atypically severe grievances, such as high inequality, a lack of political rights, or ethnic and religious divisions in society. Alternatively, it might be explained by atypical opportunities for building a rebel organization. While it is difficult to find proxies for grievances and opportunities, we find that political and social variables that are most obviously related to grievances have little explanatory power. By contrast, economic variables, which could proxy some grievances but are perhaps more obviously related to the viability of rebellion, provide considerably more explanatory power."*
+>
+> @collier2004
+
+They also introduce a factor of opportunity, for rebels or more broadly enemies to easily defeat their foes. Additional to costs of war they also introduce factors that strengthen the enemy like terrain ruggedness or forrest density which *"provide rebels with a safe haven".* Speaking more generally this factor might be vital to any invasion plans, tipping the scale heavily in favor of the defending forces.
+
+Their findings on economic variables is also echoed in @polachek2010: *"Data strongly indicate an inverse relationship between conflict and trade: country pairs that trade the most engage in the least bilateral conflict".* @polachek2010 are tracing the source of this correlation back to opportunity costs. States that go to war, will loose, their gains through trade. @martin2008 find the same relationship of opportunity using instrumental variabales: *"If war increases bilateral trade costs, it lowers trade gains the more so, the higher the ex ante import flows. Hence, observed bilateral trade openness reveals one opportunity cost of a bilateral war" .* However they also find that it is more fruitful to take the *"the geographical structure of trade and its balance between bilateral and multilateral openness"* into account. These findings also fit with the previously mentioned @vicard2012, who researched the exact relationship of trade embodied by RTAs and armed conflics. Their findings suggest that espacially deeper economic ties correlate less with interstate conflicts.
+
+These papers have all shown strong relationships between war and trade. But since I have also mentioned the theory of democratic peace I will now discuss other papers using this theory to explore armed conflict probability.
+
+@tangerås2008 model the probability of war as a utility based game where dominant strategies are dependent on the mode of governance. They distinguish between democratic and authoritarian governance. There theoretical model predicts that "*In a democracy, the leader can be costlessly replaced in general elections, whereas autocratic leaders can only be replaced at a considerable cost to the selectorate. War is more costly to the selectorate than to the leader. Hence, the ruler has an inclination to wage war too often, in democracy as well as in autocracy. The ability to costlessly reward the political leadership through reselection provides a mechanism through which the democratic selectorate can control the actions of the leadership to an extent which is impossible in autocracy*". @bennett1998 findings are more nuanced. They find, that democracies do not have that much of a problem with starting wars, but only if "*they can win quickly*". They find that wars become, less favorable to democracies if they take a long time, citing the Vietnam War as one example, leading most likely to a draw or defeat of democratic states. This could offer another explanation why democracies are less likely to go to war. It could be due to the simple problem, that wars that are being able to win quickly become less and less likely.
+
+# Method
+
+This study adopts a quantitative research design to examine the relationship between economic interdependence and armed conflict probability. Statistical analysis, specifically logistical regression analysis, will be employed to quantify the association between the two variables. A comparative approach will be utilized to investigate variations in the relationship across different regions with diverse levels of economic integration through RTAs. Drawing upon @collier2004 who also used regressional analysis for projecting risk of civil conflict, I aim to use the same method of regressional analysis. The second analysis will concentrate on the relations of two countries towards each other and the likelihood of them specifically going to war.
+
+## Data
+
+The study will draw upon various data sources to operationalise the key variables. The World Bank's wbstats database [@wbstats] will provide economic indicators, such as the Ginicoefficient or natural ressource rents. The Correlates of War (COW) project will offer data on armed conflict events, including conflicts, territorial disputes, and alliances. These collections data have luckily most been catalogued in [@miller2022]. Additional socioeconomic and political data will be accessed through sources like Our World in Data [@owidR] and specific regional organizations' websites. [@countrycode] offer an easy way for countries to be sorted into different regions making the regional aspect easier to navigate. @miller2022 also allows to control for geographic factors like terrain ruggedness, which might countries averse towards invading them due to difficulty of combat planning. Since intrastate conflicts are multifaceted and often complicated in a way that makes the potential for escalation incredibly hard to predict, I will try to control for this with t-1 Goldstein Scores of the target country provided by @Leetaru13gdelt:global and @mcclelland1984.
+
+# Results
+
+The model uses a dyadic data structure. Countries are combined with any other country on the condition that they belong to the same region according to @countrycode, or that they border each other according to @miller2022. This is done because this paper is only interested in regional trade agreements. As described above, important variables in modelling conflicts are issues of alliances as well as political, economic and geographical realities. For example: I control for strategic alliances with dummy variables representing the status of different types of alliances, such as defence pacts or non-aggression pacts between countries. The HDI and the Gini coefficient of both countries are used to control for the state of the economy.
+
+To control for individual country effects, I added a fixed effects model to emphasise differences in variable development. To control for individual country development, I used the Goldstein score, which measures a country's potential for instability based on event data. These were either calculated for data from @mcclelland1984 or the pre-calculated score from @Leetaru13gdelt:global. The score used is the average of the countries in the year t-1.
+
+```{r model_sum, echo=FALSE, fig.height=6, fig.width=5, message=FALSE, warning=FALSE, results='asis', fig.cap="Regression Result"}
+library(fastDummies)
+
+full_data_dumm <- dummy_cols(full_data_1, select_columns = c("era", "region"))
+
+## Reordering full_data_dumm$attacked
+full_data_dumm$attacked <- full_data_dumm$attacked %>%
+  fct_relevel(
+    "0", "1"
+  )
+
+## Reordering full_data_dumm$defense_pact_attacked
+full_data_dumm$defense_pact_attacked <- full_data_dumm$defense_pact_attacked %>%
+  fct_relevel(
+    "0", "1"
+  )
+
+## Reordering full_data_dumm$defense_pact_attacker
+full_data_dumm$defense_pact_attacker <- full_data_dumm$defense_pact_attacker %>%
+  fct_relevel(
+    "0", "1"
+  )
+
+## Reordering full_data_dumm$entente_pact_attacked
+full_data_dumm$entente_pact_attacked <- full_data_dumm$entente_pact_attacked %>%
+  fct_relevel(
+    "0", "1"
+  )
+
+## Reordering full_data_dumm$entente_pact_attacker
+full_data_dumm$entente_pact_attacker <- full_data_dumm$entente_pact_attacker %>%
+  fct_relevel(
+    "0", "1"
+  )
+
+
+full_data_2 <- full_data_1%>%
+  select(-ccode1, -ccode2, -year, -gdp_per_capita_attacker
+         , -gdp_per_capita_attacked, -entity, -era, -region, -mindist
+         , -dnewlmtnest_attacked, -dnewlmtnest_attacker, -defense_pact_attacker
+         , -neutrality_pact_attacker, -nonaggression_attacker, -entente_pact_attacker
+         , -region
+  )
+
+result_1 <- glm(full_data_2, formula = attacked ~ .
+    , family = binomial(link = "logit"))
+
+full_data_3 <- full_data_1%>%
+  mutate(goldstein_score = goldstein_score - ave(goldstein_score, ccode1)
+       , gini_attacked = gini_attacked - ave(gini_attacked, ccode1)
+       , hdi_attacked = hdi_attacked - ave(hdi_attacked, ccode1)
+       , natural_ressource_rents_attacked = natural_ressource_rents_attacked - ave(natural_ressource_rents_attacked, ccode1))%>%
+  mutate(gini_attacker = gini_attacker - ave(gini_attacker, ccode2)
+         , hdi_attacker = hdi_attacker - ave(hdi_attacker, ccode2)
+         , natural_ressource_rents_attacker = natural_ressource_rents_attacker - ave(natural_ressource_rents_attacker, ccode1))%>%
+  select(-ccode1, -ccode2, -year, -gdp_per_capita_attacker
+         , -gdp_per_capita_attacked, -entity, -era, -region, -mindist
+         , -dnewlmtnest_attacked, -dnewlmtnest_attacker, -defense_pact_attacker
+         , -neutrality_pact_attacker, -nonaggression_attacker, -entente_pact_attacker
+         , -region
+         )
+
+
+result_2 <- glm(full_data_3, formula = attacked ~ .
+                , family = binomial(link = "logit"))
+
+library(DescTools)
+summ_1 <- summary(result_1)
+summ_2 <- summary(result_2)
+
+
+r2result1 <- round(1 - summ_1$deviance/summ_1$null.deviance,3)
+r2result2 <- round(1 - summ_2$deviance/summ_2$null.deviance,3)
+library(stargazer)
+
+
+
+stargazer(result_1, result_2
+          #, type = "text"
+          , out = "reg_table.html"
+          , style = "apsr"
+          , single.row = TRUE
+          , header = FALSE
+          , digits=2
+          , table.layout = "ldcm#-t-s-a=n"
+          , title = "Regression Results"
+          , column.labels = c("GLM", "Fixed Effects")
+          , covariate.labels = c("Major Power Attacked", "Major Power Attacker", "RTA Deep", "RTA Shallow", 
+                                 "Gini Attacked", "HDI Attacked", "Gini Attacker"
+                                 , "HDI Attacker", "Former Colony Attacked",
+                                 "Previous Wars Attacked", "Former Colony Attacker",
+                                 "Previous Wars Attacker", "Is Democracy Attacked",
+                                 "Defense Pact", "Neutrality Pact", "Nonaggression"
+                                 , "Entente Pact", "Is Democracy Attacker"
+                                 , "Rugged Attacked", "Natural Resource Rents Attacked",
+                                 "Rugged Attacker", "Natural Resource Rents Attacker", "Goldstein Score")
+          , dep.var.labels = c("State being Attacked by Neigbouring State")
+          , add.lines = list(c("Pseudo R2", r2result1, r2result2))
+)
+
+```
+
+I differentiate economic dependencies of countries along the line of @vicard2012. My data set by @blöthner2022 comes with a detailed dyadic run-down of in-place trade policies. It distinguishes RTAs into different kinds from which I calculated their score of deep and shallow RTAs in-place between them. Customs Unions and integrated markets count as deep RTAs while simple import/export rules count as shallow.
+
+I find that the result does support the stated hypothesis, that RTAs contribute negatively to the probability of a war breaking out between two countries. The effect of deep RTAs is also stronger than shallow RTAs. However both these results are not statistacally significant on an **p** \< 0.1 level. Other variables however seem to be highly significant like the Gini Coefficient and the HDI furthering the argument, that economic development lead to a less likelihood of a war-like event. The models also show that the Goldstein Score can be a useful tool to control for individual developments that are not easy to measure. The database provided by @Leetaru13gdelt:global has a much higher degree of detail, the potencial of which could be investigated further in future studies.
+
+# Summary
+
+This expose presents a research proposal aimed at examining the relationship between economic interdependence and the probability of armed conflict. The research question driving this investigation is: *"To what extent does economic interdependence, as measured by regional trade agreements (RTAs), influence the likelihood of armed conflict?"* This paper hypothesized that RTAs will have a negative impact on the probability of armed conflict between states. This work is not interested in making completely accurate predictions. It is more concerned with analyzing larger trends.
+
+The theoretical framework guiding this study is based on the theory of democratic peace, which suggests that democratic systems and economic ties contribute to peaceful relations. Building on @doyle1986 it is hypothesized that higher levels of economic interdependence, reflected through RTAs, will be associated with a lower probability of armed conflict.
+
+Using regression analysis my findings seem to be in line with the hypothesis of RTAs being a negative influence on countries going to war with each other. These findings however are not significant on a 10% level, so they will have to be taken with caution. Other research like @powers2004 on this matter should be consulted to make more substantial claims.
+
+Moreover, there exist several other factors that require attention when analysing foreign policy and wars. Diplomatic actions and international pressure can lead many situations to be resolved without escalation towards war. As this study aims to provide probabilities for certain decisions, it may be beneficial to narrow down the variables and create a micro-economic game that considers current and future economic developments when determining optimal decisions. Nonetheless, such a task requires someone with greater knowledge on the topic than myself. To provide an accurate assessment of the level of danger, individual developments need to be analysed qualitatively. Using the Goldstein score provided through world event data by @Leetaru13gdelt:global or @mcclelland1984 can operationalise individual developments into models that may be more precise than the current one. However, this goes beyond the scope of this paper.
+
+# Appendix (Data) {.unlisted .unnumbered}
+
+## Global Militarization Index {.unlisted .unnumbered}
+
+"Compiled by BICC, the Global Militarization Index (GMI) presents on an annual basis the relative weight and importance of a country's military apparatus in relation to its society as a whole. The GMI covers 153 countries and is based on the latest available figures (up to 2021). The index project is financially supported by Germany's Federal Ministry for Economic Cooperation and Development" [@bicc1].
+
+## Colonial Origin {.unlisted .unnumbered}
+
+"The Authoritarian Regimes Dataset version 6.0 covers the time period 1972-2014 and includes all 192 nations recognized as members of the UN except the four micro states of Europe (Andorra, Liechtenstein, Monaco and San Marino) and two micro states in the Pacific that are not members of the World Bank (Nauru and Tuvalu)" [@ht1; @ht2; @ht3].
+
+## Correlates Of War {.unlisted .unnumbered}
+
+### Correlates Of War War Data, 1816 -- 2007 (v4.0) {.unlisted .unnumbered}
+
+List of Wars classified by CoW. Provides names of the parties involved, names of the wars, as well as information about the development of the war, type and outcome [@sarkees2010].
+
+### Correlates Of War (Formal Alliances (v4.1)) {.unlisted .unnumbered}
+
+"This data set records all formal alliances among states between 1816 and 2012, including mutual defense pacts, non-aggression treaties, and ententes. This data set is hosted by Douglas Gibler, University of Alabama" [@gibler2009].
+
+## democracyData {.unlisted .unnumbered}
+
+"This package archives a large number of datasets measuring democracy in use in the scholarly literature, and it provides functions to access many others. You can use it to access some widely used datasets, including Polity5, Freedom House, Geddes, Wright, and Frantz' autocratic regimes dataset, the Lexical Index of Electoral Democracy, the DD/ACLP/PACL/CGV dataset, the main indexes of the V-Dem dataset, and many others" [@2021Access].
+
+## owidR {.unlisted .unnumbered}
+
+"This package acts as an interface to Our World in Data datasets, allowing for an easy way to search through data used in over 3,000 charts and load them into the R environment" [@owidR].
+
+## PeacescienceR {.unlisted .unnumbered}
+
+"peacesciencer is an R package including various functions and data sets to allow easier analyses in the field of quantitative peace science. The goal is to provide an R package that reasonably approximates what made EUGene so attractive to scholars working in the field of quantitative peace science in the early 2000s. EUGene shined because it encouraged replications of conflict models while having the user also generate data from scratch" [@miller2022].
+
+## RTA {.unlisted .unnumbered}
+
+"This database includes all multilateral and bilateral regional trade agreements as notified to the World Trade Organization for the last 73 years from 1950 to 2022. There is a total of 570 agreements in the dataset that are differentiated along seven different categories. Additionally there are variables indicating whether countries were founding members or joined later" @blöthner2022.
+
+## Wars Included {.unlisted .unnumbered}
+
+```{r wars_included, echo=FALSE, fig.height=9, fig.width=9, message=FALSE, warning=FALSE, fig.cap="Included Wars in base Dataset"}
+war_stats%>%
+  mutate(region1 = countrycode(ccode1,"cown","region")
+         , region2 = countrycode(ccode2,"cown","region")
+         , regional = ifelse(region1 == region2,T,F)
+         )%>%
+  filter(year > 1945)%>%
+  mutate(deaths = batdeath1 + batdeath2)%>%
+  select(warnum, year, aggressor, looser, winner, deaths, regional)%>%
+  group_by(warnum)%>%
+  summarise(start_year = min(year)
+            , end_year = max(year)
+            , regional = as.factor(min(regional)))%>%
+  mutate(regional = ifelse(regional == 1, "Regional", "Interregional"))%>%
+  left_join(cow_wars_match_tables, by = join_by(warnum == WarNum))%>%
+  arrange(start_year)%>%
+  ggplot()+
+  aes(x=start_year
+      , xend=end_year+1
+      , y=fct_reorder(WarName, start_year, .desc = T)
+      , yend=fct_reorder(WarName, start_year, .desc = T)
+      , color = regional
+      )+
+  geom_segment(size = 5, alpha = 0.5)+
+  scale_color_discrete()+
+  owidR::theme_owid() + 
+  theme(plot.subtitle = element_text(family = "serif"),
+    plot.title = element_text(family = "serif")) +
+  labs(title = "Interstate Wars since World-War 2"
+  , x = "Year"
+  , y = "War Names"
+  , subtitle = "Gant chart of all interstate wars as categorized by Correlates Of War with the provided name. 
+Chart shows beginning and end year of the wars since the end of World War 2, World War 2 not included.",
+    caption = "Source:  Sarkees and Wayman (2010)"
+  , color = "Regional War") + theme(panel.grid.major = element_line(colour = "gray70",
+    linetype = "solid"))
+```
+
+## Included Variables {.unlisted .unnumbered}
+
+|                       |                         |                                                                                                    |
+|-------------------|--------------------|---------------------------------|
+| Variable Group        | Operationalization      | Description                                                                                        |
+| Political Factors     | Democracy Dummy         | Is the regime democratic                                                                           |
+|                       | International alliances | Presence or absence of alliances with other countries                                              |
+|                       | Major Power             | Is a country considered a major power during that time                                             |
+| Historical Factors    | Colonial history        | Indication of past colonization by foreign powers                                                  |
+|                       | Previous conflicts      | Number or intensity of prior conflicts                                                             |
+|                       | Goldstein Score         | This score measures the potential of global events to destabilise a given country                  |
+| Geographic Factors    | Proximity to borders    | Distance or adjacency to neighboring countries (Closest distance of two states towards each other) |
+|                       | Ruggedness of Terrain   | Amount of mountainous or unevenness of states terrain                                              |
+|                       | Natural resources       | Availability or abundance of specific natural resources (Sum of gold, oil, uranium exports in \$)  |
+| Socioeconomic Factors | Human Development Index | Composite index reflecting education, health, and living standards                                 |
+|                       | Income inequality       | Measurement of wealth distribution within a population                                             |
+
+: Proposed variables grouped by type of variable
+
+# Literature And Data Citations {.unlisted .unnumbered}
