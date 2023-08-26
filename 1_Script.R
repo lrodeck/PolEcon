@@ -895,4 +895,7 @@ new_names <- c("Mindist", "Is Major Power", "Partner is Major Power", "RTA Deep"
                "Rugged Attacker", "Dnewlmtnest Attacker", "Natural Resource Rents Attacker", "Region", "Era",
                "Goldstein Score")
 
+library(correlation)
 
+correlation(full_data_2)%>%
+  knitr::kable()
